@@ -542,26 +542,76 @@ void		patch_daily_F(
     //patch[0].landuse_defaults[0][0].irrigation; format change;
     //patch[0].landuse_defaults[0][0].irrigation is used below
 
-	// START OF DITCHES 
+	// START OF DITCHES
+	// Ditch extraction is represented as lateral saturated flow toward a
+	// 1 m wide, 1 m deep ditch running through the 30 m length of a 30 x 30 m patch.
+	// Assumptions: ditch is centered in the patch, receives groundwater from
+	// both sides, and its water level is at the ditch bottom (empty ditch).
+	// sat_deficit_z is treated as water-table depth below the soil surface (m).
 
-    patch[0].ditch_routing = basin[0].ditch_routing; 
-    //patch[0].ditch_routing = command_line[0].ditch_routing*;
+    patch[0].ditch_routing = basin[0].ditch_routing;
 
+    if(command_line[0].ditchextraction_flag == 1 &&
+       patch[0].drainage_type > 0 &&
+       patch[0].drainage_type % actionDITCH == 0) {
 
-    if(command_line[0].ditchextraction_flag==1 && patch[0].drainage_type>0 && patch[0].drainage_type % actionDITCH==0){
-	if (patch[0].sat_deficit_z < 1.0) {
-	// patch[0].ditch_extraction = min(patch[0].available_soil_water, max(0.0, 1.0 - patch[0].sat_deficit_z)); 
-	patch[0].ditch_extraction = min(patch[0].available_soil_water, max(0.0, (1.0 - 
-patch[0].sat_deficit_z)*(patch[0].sat_def_pct_indexM * patch[0].soil_defaults[0][0].vksat_0zm[patch[0].sat_def_pct_index+1] 
-+ (1.0-patch[0].sat_def_pct_indexM) * patch[0].soil_defaults[0][0].vksat_0zm[patch[0].sat_def_pct_index])*(30.0/15.0)*(1.0/900.0)*(1.0 
-- patch[0].sat_deficit_z))); 
+        double ditch_depth = 1.0;          // m
+        double ditch_width = 1.0;           // m
+        double ditch_length = 30.0;         // m; ditch spans patch length
+        double patch_width = 30.0;          // m
+        double patch_area = 900.0;          // m2
+        double flow_distance = (patch_width - ditch_width) / 2.0; // 14.5 m
+        double water_table_depth = max(0.0, patch[0].sat_deficit_z); // m below surface
+        double effective_ditch_depth = min(ditch_depth,
+            patch[0].soil_defaults[0][0].soil_depth);
+        double saturated_thickness = max(0.0,
+            effective_ditch_depth - water_table_depth);
+        double delta_h = saturated_thickness; // ditch water surface assumed at ditch bottom
+        double hydraulic_gradient = 0.0;
+        double horizontal_transmissivity = 0.0; // m2/day
+        double ditch_volume = 0.0;              // m3/day
 
-		// min(patch[0].available_soil_water, 0.0005*max(0.0, 1.0-patch[0].sat_deficit_z*0.143));
-        patch[0].sat_deficit += patch[0].ditch_extraction; // extraction completed, making sat_deficit_z larger = deeper = removing water
-	patch[0].detention_store += patch[0].ditch_extraction*(1-command_line[0].ditch_routing); // need to check this step, could directly add to runoff 
-	
-	}
-    } 
+        // Only extract water when the water table intersects the ditch face.
+        if(saturated_thickness > 0.0 && flow_distance > 0.0) {
+            double Ksat_h = patch[0].soil_defaults[0][0].Ksat_0; // m/day
+            double m_h = patch[0].soil_defaults[0][0].m;         // horizontal decay length, m
+
+            // Integrate RHESSys' horizontal conductivity profile,
+            // K_h(z) = Ksat_0 * exp(-z/m), over the saturated part of the ditch face.
+            if(Ksat_h > 0.0) {
+                if(m_h > 0.0) {
+                    horizontal_transmissivity = Ksat_h * m_h *
+                        (exp(-water_table_depth / m_h) -
+                         exp(-effective_ditch_depth / m_h));
+                } else {
+                    // If no positive decay length is specified, assume K_h is constant with depth.
+                    horizontal_transmissivity = Ksat_h * saturated_thickness;
+                }
+            }
+
+            hydraulic_gradient = delta_h / flow_distance;
+
+            // Darcy flow from both sides of the ditch: T (m2/day) * gradient
+            // * ditch length (m) * 2 sides = m3/day.
+            ditch_volume = horizontal_transmissivity * hydraulic_gradient *
+                ditch_length * 2.0;
+
+            // Convert ditch inflow volume to an equivalent depth over the patch (m/day).
+            patch[0].ditch_extraction = ditch_volume / patch_area;
+
+            // Do not remove more water than is currently available in the patch.
+            patch[0].ditch_extraction = min(patch[0].available_soil_water,
+                max(0.0, patch[0].ditch_extraction));
+
+            // Update soil deficit to represent water removed by lateral drainage.
+            patch[0].sat_deficit += patch[0].ditch_extraction;
+
+            // Retain the non-routed fraction in detention storage. Use the same
+            // effective routing coefficient assigned to the patch above.
+            patch[0].detention_store += patch[0].ditch_extraction *
+                (1.0 - patch[0].ditch_routing);
+        }
+    }
 
 	// UPDATING WATER 
 
