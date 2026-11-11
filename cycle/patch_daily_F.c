@@ -557,9 +557,9 @@ void		patch_daily_F(
 
         double ditch_depth = 1.0;          // m
         double ditch_width = 1.0;           // m
-        double ditch_length = 30.0;         // m; ditch spans patch length
-        double patch_width = 30.0;          // m
-        double patch_area = 900.0;          // m2
+        double patch_area = patch[0].area;          // m2
+		double ditch_length = sqrt(patch_area);         // m; ditch spans patch length
+        double patch_width = sqrt(patch_area);          // m
         double flow_distance = (patch_width - ditch_width) / 2.0; // 14.5 m
         double water_table_depth = max(0.0, patch[0].sat_deficit_z); // m below surface
         double effective_ditch_depth = min(ditch_depth,
